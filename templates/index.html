@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>點餐系統</title>
+    <style>
+        /* (這裡沿用之前的 CSS，加上一個選中按鈕變色的樣式) */
+        .btn-selected { background-color: #e74c3c !important; color: white; border: 2px solid #c0392b; }
+        .screen { display: none; flex-direction: column; align-items: center; padding-top: 50px; height: 100vh; text-align: center; }
+        .btn { padding: 15px 25px; margin: 10px; font-size: 1.2rem; cursor: pointer; border-radius: 8px; border: none; background: #3498db; color: white; }
+    </style>
+</head>
+<body>
+
+    <div id="IDLE" class="screen" onclick="uiTrigger('START')"><h1>🧋 歡迎光臨 (點擊開始)</h1></div>
+    
+    <div id="MENU" class="screen">
+        <h1>第一步：選擇飲品</h1>
+        <button class="btn" onclick="selectDrink('珍珠奶茶', 60)">珍珠奶茶 $60</button>
+        <button class="btn" onclick="selectDrink('經典紅茶', 40)">經典紅茶 $40</button>
+    </div>
+
+    <div id="CUSTOMIZE" class="screen">
+        <h1 id="drink-name">客製化</h1>
+        
+        <h3>🧊 冰塊</h3>
+        <div>
+            <button id="ice-少冰" class="btn ice-opt" onclick="setOption('ice', '少冰')">少冰</button>
+            <button id="ice-去冰" class="btn ice-opt" onclick="setOption('ice', '去冰')">去冰</button>
+            <button id="ice-正常冰" class="btn ice-opt" onclick="setOption('ice', '正常冰')">正常冰</button>
+        </div>
+
+        <h3>🍬 甜度</h3>
+        <div>
+            <button id="sugar-無糖" class="btn sugar-opt" onclick="setOption('sugar', '無糖')">無糖</button>
+            <button id="sugar-半糖" class="btn sugar-opt" onclick="setOption('sugar', '半糖')">半糖</button>
+            <button id="sugar-全糖" class="btn sugar-opt" onclick="setOption('sugar', '全糖')">全糖</button>
+        </div>
+        
+        <hr>
+        <button class="btn" style="background:#2ecc71" onclick="uiTrigger('CONFIRM_ADD')">🛒 確認加入</button>
+    </div>
+
+    <div id="CHECKOUT" class="screen">
+        <h1>結帳明細</h1>
+        <div id="cart-list"></div>
+        <button class="btn" onclick="uiTrigger('GOTO_MENU')">➕ 繼續加點</button>
+        <button class="btn" style="background:#2ecc71" onclick="uiTrigger('PAY')">💵 現金結帳</button>
+        <button class="btn" style="background:#2ecc71" onclick="uiTrigger('PAY')">💳 信用卡</button>
+    </div>
+
+    <div id="RESULT" class="screen">
+        <h1 id="res-title"></h1>
+        <p id="res-msg" style="font-size: 2rem;"></p>
+        <button class="btn" onclick="location.reload()">🏠 返回首頁</button>
+    </div>
+
+    <script>
+        // --- 前端 Model: UI 狀態 ---
+        let uiState = 'IDLE'; 
+        // 🌟1：把預設的冰塊甜度補齊
+        let tempSelection = { name: '', price: 0, ice: '正常冰', sugar: '全糖' };
+
+        // --- 前端 Controller: UI 狀態機轉移 ---
+        function uiTrigger(event) {
+            console.log(`[前端] 接收事件: ${event}`);
+
+            if (uiState === 'IDLE' && event === 'START') {
+                uiState = 'MENU';
+            } 
+            else if (uiState === 'CUSTOMIZE' && event === 'CONFIRM_ADD') {
+                // 將點餐 Message 送往後端
+                callBackend('ADD_ITEM', tempSelection).then((res) => {
+                    uiState = 'CHECKOUT';
+                    // 🌟2：必須把後端回傳的最新購物車狀態 (res) 餵給 render，畫面才有資料！
+                    render(res); 
+                });
+                return; // callBackend 會處理 render，這裡提早結束
+            }
+            else if (uiState === 'CHECKOUT' && event === 'GOTO_MENU') {
+                uiState = 'MENU';
+            }
+            else if (uiState === 'CHECKOUT' && event === 'PAY') {
+                callBackend('START_PAYMENT').then(() => {
+                    return callBackend('CONFIRM_PAY');
+                }).then(res => {
+                    uiState = 'RESULT';
+                    render(res);
+                });
+                return;
+            }
+            render();
+        }
+
+        // 輔助函式：選擇飲料與變色邏輯
+        function selectDrink(name, price) {
+            // 🌟 每次選新飲料時，重置客製化選項
+            tempSelection = { name, price, ice: '正常冰', sugar: '全糖' };
+            uiState = 'CUSTOMIZE';
+            render();
+        }
+        function setOption(type, val) {
+            tempSelection[type] = val;
+            render();
+        }
+
+        // --- 與後端 Controller 通訊的 Event Bus ---
+        async function callBackend(id, payload = null) {
+            const response = await fetch('/api/dispatch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, payload })
+            });
+            return await response.json();
+        }
+
+        // --- View 渲染器 ---
+        function render(backendData = null) {
+            document.querySelectorAll('.screen').forEach(s => s.style.display = 'none');
+            const currentScreen = document.getElementById(uiState);
+            if (currentScreen) currentScreen.style.display = 'flex';
+
+            // 🌟3：更新客製化按鈕變色 (包含冰塊與甜度)
+            if (uiState === 'CUSTOMIZE') {
+                document.getElementById('drink-name').innerText = `客製化：${tempSelection.name}`;
+                
+                document.querySelectorAll('.ice-opt').forEach(b => {
+                    b.classList.toggle('btn-selected', b.id === `ice-${tempSelection.ice}`);
+                });
+                document.querySelectorAll('.sugar-opt').forEach(b => {
+                    b.classList.toggle('btn-selected', b.id === `sugar-${tempSelection.sugar}`);
+                });
+            }
+
+            // 🌟4：購物車列表把冰塊跟甜度都印出來
+            if (uiState === 'CHECKOUT' && backendData) {
+                const order = backendData.order_data;
+                document.getElementById('cart-list').innerHTML = 
+                    order.items.map(i => `<p>🍹 ${i.name} (${i.ice}, ${i.sugar}) - $${i.price}</p>`).join('') 
+                    + `<hr><h2 style="color: #e74c3c;">總計：$${order.total}</h2>`;
+            }
+
+            // 更新結果畫面
+            if (uiState === 'RESULT' && backendData) {
+                const order = backendData.order_data;
+                const title = document.getElementById('res-title');
+                const msg = document.getElementById('res-msg');
+                if (order.state === 'PAID') {
+                    title.innerText = "✅ 付款成功";
+                    msg.innerText = `取餐碼：${order.order_id}`;
+                } else {
+                    title.innerText = "❌ 訂單失敗";
+                    msg.innerText = "請重新操作。";
+                }
+            }
+        }
+
+        render(); // 初始化渲染
+    </script>
+</body>
+</html>
